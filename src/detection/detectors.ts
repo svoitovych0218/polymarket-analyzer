@@ -138,12 +138,123 @@ export function detectComplementary(
   };
 }
 
+// ── Type 2 — Temporal Dependency ─────────────────────────────────────────────
+//
+// market_ids ordered from narrowest/earliest to broadest/latest window
+// (e.g. ["btc-in-may", "btc-in-q2", "btc-in-2025"]).
+// Constraint: prices must be non-decreasing — a broader window can only be
+// more likely than a narrower one it contains.
+// Violation: any p[i] > p[i+1] + TOLERANCE (narrower priced above broader).
+// Magnitude: largest such breach.
+
+export function detectTemporalDependency(
+  group: Group,
+  prices: Map<string, number>
+): MismatchResult | null {
+  if (group.market_ids.length < 2) return null;
+
+  const details = resolvePrices(group, prices);
+  if (details === null) return null;
+
+  const ids = group.market_ids;
+  let maxBreach = 0;
+
+  for (let i = 0; i < ids.length - 1; i++) {
+    // p[i] (narrower) must be <= p[i+1] (broader)
+    const breach = details[ids[i]] - details[ids[i + 1]];
+    if (breach > maxBreach) maxBreach = breach;
+  }
+
+  return {
+    violated: maxBreach > TOLERANCE,
+    magnitude: maxBreach,
+    details,
+  };
+}
+
+// ── Type 5 — Conditional Probability ─────────────────────────────────────────
+//
+// market_ids[0] = joint/conditional event (e.g. "A AND B").
+// market_ids[1..n] = constituent markets (each must be >= joint).
+// Constraint: P(joint) <= P(constituent_i) for all i.
+// Violation: P(joint) > any P(constituent_i) by more than TOLERANCE.
+// Magnitude: largest excess = max(0, max_i(P(joint) - P(constituent_i))).
+
+export function detectConditionalProbability(
+  group: Group,
+  prices: Map<string, number>
+): MismatchResult | null {
+  if (group.market_ids.length < 2) return null;
+
+  const details = resolvePrices(group, prices);
+  if (details === null) return null;
+
+  const [jointId, ...constituentIds] = group.market_ids;
+  const jointPrice = details[jointId];
+
+  let maxExcess = 0;
+  for (const id of constituentIds) {
+    const excess = jointPrice - details[id];
+    if (excess > maxExcess) maxExcess = excess;
+  }
+
+  return {
+    violated: maxExcess > TOLERANCE,
+    magnitude: maxExcess,
+    details,
+  };
+}
+
+// ── Type 6 — Multi-Market Constraint (Fréchet bounds) ────────────────────────
+//
+// market_ids = [jointId, idA, idB] (exactly 3 markets).
+// Fréchet bounds for P(A ∧ B):
+//   lower = max(0, P(A) + P(B) - 1)
+//   upper = min(P(A), P(B))
+// Constraint: lower <= P(joint) <= upper.
+// Violation: P(joint) outside [lower - TOLERANCE, upper + TOLERANCE].
+// Magnitude: distance to nearest valid bound (0 if within bounds).
+
+export function detectMultiMarketConstraint(
+  group: Group,
+  prices: Map<string, number>
+): MismatchResult | null {
+  if (group.market_ids.length !== 3) return null;
+
+  const details = resolvePrices(group, prices);
+  if (details === null) return null;
+
+  const [jointId, idA, idB] = group.market_ids;
+  const pJoint = details[jointId];
+  const pA = details[idA];
+  const pB = details[idB];
+
+  const lower = Math.max(0, pA + pB - 1);
+  const upper = Math.min(pA, pB);
+
+  let magnitude = 0;
+  if (pJoint < lower) {
+    magnitude = lower - pJoint;
+  } else if (pJoint > upper) {
+    magnitude = pJoint - upper;
+  }
+
+  return {
+    violated: magnitude > TOLERANCE,
+    magnitude,
+    details,
+  };
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 const DETECTORS: Record<number, Detector> = {
   1: detectThresholdOrdering,
   2: detectExhaustivePartition,
   3: detectComplementary,
+  4: detectTemporalDependency,
+  5: detectConditionalProbability,
+  6: detectMultiMarketConstraint,
 };
 
 /**

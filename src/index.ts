@@ -1,15 +1,15 @@
 import { initDb } from "./db/schema";
+import { pollGammaMarkets } from "./api/gamma";
 
-function main(): void {
-  const db = initDb();
-  console.log("Database initialised successfully.");
+async function main(): Promise<void> {
+  initDb();
+  console.log("Database initialised.");
 
-  // Verify all three tables exist
-  const tables = db
-    .prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
-    .all() as { name: string }[];
-
-  console.log("Tables:", tables.map((t) => t.name).join(", "));
+  const changed = await pollGammaMarkets();
+  console.log(`Changed markets: ${changed.length}`);
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

@@ -30,12 +30,20 @@ export function initDb(): Database.Database {
 
 /** Idempotent migrations for columns added after the initial schema. */
 function migrate(db: Database.Database): void {
-  const existing = (
+  const marketCols = (
     db.prepare(`PRAGMA table_info(markets)`).all() as Array<{ name: string }>
   ).map((r) => r.name);
 
-  if (!existing.includes("clob_token_id")) {
+  if (!marketCols.includes("clob_token_id")) {
     db.exec(`ALTER TABLE markets ADD COLUMN clob_token_id TEXT NOT NULL DEFAULT ''`);
+  }
+
+  const groupCols = (
+    db.prepare(`PRAGMA table_info(groups)`).all() as Array<{ name: string }>
+  ).map((r) => r.name);
+
+  if (!groupCols.includes("bucket_key")) {
+    db.exec(`ALTER TABLE groups ADD COLUMN bucket_key TEXT NOT NULL DEFAULT ''`);
   }
 }
 

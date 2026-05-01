@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.92.0",
     "better-sqlite3": "^12.9.0",
     "node-cron": "^3.0.3"
   },

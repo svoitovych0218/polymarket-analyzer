@@ -8,6 +8,8 @@ interface GammaMarket {
   question: string;         // Gamma uses "question" for the market title
   description: string;
   resolutionSource?: string;
+  // JSON-encoded string array: [yesTokenId, noTokenId]
+  clobTokenIds?: string;
   active: boolean;
   closed: boolean;
 }
@@ -20,6 +22,7 @@ export interface Market {
   description: string;
   resolutionCondition: string;
   category: string;
+  clobTokenId: string;      // YES token ID for the CLOB API; "" if unavailable
   metadataHash: string;
   lastSeenAt: string;
 }
@@ -49,11 +52,20 @@ function computeHash(
     .slice(0, 32);
 }
 
+function parseYesTokenId(raw: GammaMarket): string {
+  try {
+    const ids: string[] = JSON.parse(raw.clobTokenIds ?? "[]");
+    return ids[0] ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function normalize(raw: GammaMarket, now: string): Market {
   const title = raw.question ?? "";
   const description = raw.description ?? "";
-  // The API field is resolutionSource; category is not available on the
-  // markets endpoint — it is inferred later by the entity extractor.
+  // Category is not available on the markets endpoint — inferred later
+  // by the entity extractor using the keyword dictionary.
   const resolutionCondition = raw.resolutionSource ?? "";
   return {
     id: raw.id,
@@ -61,6 +73,7 @@ function normalize(raw: GammaMarket, now: string): Market {
     description,
     resolutionCondition,
     category: "",
+    clobTokenId: parseYesTokenId(raw),
     metadataHash: computeHash(title, description, resolutionCondition),
     lastSeenAt: now,
   };
@@ -128,9 +141,6 @@ async function fetchAllMarkets(): Promise<GammaMarket[]> {
  * Fetches all active markets from the Gamma API, upserts them into SQLite,
  * and returns only the markets whose metadata changed since the last poll.
  * Designed to be called every 4 hours by the scheduler.
- *
- * Note: the Gamma markets endpoint does not carry a category field. Category
- * is inferred downstream by the entity extractor using the keyword dictionary.
  */
 export async function pollGammaMarkets(): Promise<Market[]> {
   const raw = await fetchAllMarkets();
@@ -154,14 +164,15 @@ export async function pollGammaMarkets(): Promise<Market[]> {
 
   const upsert = db.prepare(`
     INSERT INTO markets
-      (id, title, description, resolution_condition, category, metadata_hash, last_seen_at)
+      (id, title, description, resolution_condition, category, clob_token_id, metadata_hash, last_seen_at)
     VALUES
-      (@id, @title, @description, @resolutionCondition, @category, @metadataHash, @lastSeenAt)
+      (@id, @title, @description, @resolutionCondition, @category, @clobTokenId, @metadataHash, @lastSeenAt)
     ON CONFLICT(id) DO UPDATE SET
       title                = excluded.title,
       description          = excluded.description,
       resolution_condition = excluded.resolution_condition,
       category             = excluded.category,
+      clob_token_id        = excluded.clob_token_id,
       metadata_hash        = excluded.metadata_hash,
       last_seen_at         = excluded.last_seen_at
   `);

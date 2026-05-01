@@ -24,7 +24,19 @@ export function initDb(): Database.Database {
   db.pragma("foreign_keys = ON");
 
   applySchema(db);
+  migrate(db);
   return db;
+}
+
+/** Idempotent migrations for columns added after the initial schema. */
+function migrate(db: Database.Database): void {
+  const existing = (
+    db.prepare(`PRAGMA table_info(markets)`).all() as Array<{ name: string }>
+  ).map((r) => r.name);
+
+  if (!existing.includes("clob_token_id")) {
+    db.exec(`ALTER TABLE markets ADD COLUMN clob_token_id TEXT NOT NULL DEFAULT ''`);
+  }
 }
 
 function applySchema(db: Database.Database): void {
@@ -35,6 +47,7 @@ function applySchema(db: Database.Database): void {
       description         TEXT NOT NULL DEFAULT '',
       resolution_condition TEXT NOT NULL DEFAULT '',
       category            TEXT NOT NULL DEFAULT '',
+      clob_token_id       TEXT NOT NULL DEFAULT '',
       metadata_hash       TEXT NOT NULL,
       last_seen_at        TEXT NOT NULL
     );

@@ -7,6 +7,7 @@ function makeMarket(overrides: Partial<Market> & { id: string; title: string }):
     category: "",          // not used by extractor — inferred from dictionary
     description: "",
     resolutionCondition: "",
+    clobTokenId: "",
     metadataHash: "abc",
     lastSeenAt: new Date().toISOString(),
     ...overrides,

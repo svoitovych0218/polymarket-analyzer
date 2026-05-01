@@ -1,3 +1,4 @@
+import "dotenv/config";
 import cron from "node-cron";
 import { initDb, getDb } from "./db/schema";
 import { pollGammaMarkets } from "./api/gamma";

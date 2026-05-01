@@ -1,0 +1,22 @@
+{
+  "name": "polymarket-analyzer",
+  "version": "0.1.0",
+  "description": "Detects logical mismatch patterns across Polymarket prediction markets",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}

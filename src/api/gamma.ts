@@ -7,9 +7,7 @@ interface GammaMarket {
   id: string;
   question: string;         // Gamma uses "question" for the market title
   description: string;
-  resolutionCondition?: string;
-  category: string;
-  tags?: Array<{ id: number; label: string }>;
+  resolutionSource?: string;
   active: boolean;
   closed: boolean;
 }
@@ -29,7 +27,7 @@ export interface Market {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const GAMMA_BASE_URL = "https://gamma-api.polymarket.com";
-const PAGE_LIMIT = 100;
+const PAGE_LIMIT = 500;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
 
@@ -54,13 +52,15 @@ function computeHash(
 function normalize(raw: GammaMarket, now: string): Market {
   const title = raw.question ?? "";
   const description = raw.description ?? "";
-  const resolutionCondition = raw.resolutionCondition ?? "";
+  // The API field is resolutionSource; category is not available on the
+  // markets endpoint — it is inferred later by the entity extractor.
+  const resolutionCondition = raw.resolutionSource ?? "";
   return {
     id: raw.id,
     title,
     description,
     resolutionCondition,
-    category: raw.category ?? "",
+    category: "",
     metadataHash: computeHash(title, description, resolutionCondition),
     lastSeenAt: now,
   };
@@ -76,7 +76,6 @@ async function fetchWithBackoff(
   try {
     res = await fetch(url);
   } catch (err) {
-    // Network-level error — always retry
     if (attempt >= MAX_RETRIES) throw err;
     await sleep(BASE_DELAY_MS * 2 ** attempt);
     return fetchWithBackoff(url, attempt + 1);
@@ -100,7 +99,7 @@ async function fetchWithBackoff(
   return fetchWithBackoff(url, attempt + 1);
 }
 
-// ── Pagination ───────────────────────────────────────────────────────────────
+// ── Pagination ────────────────────────────────────────────────────────────────
 
 async function fetchAllMarkets(): Promise<GammaMarket[]> {
   const all: GammaMarket[] = [];
@@ -129,6 +128,9 @@ async function fetchAllMarkets(): Promise<GammaMarket[]> {
  * Fetches all active markets from the Gamma API, upserts them into SQLite,
  * and returns only the markets whose metadata changed since the last poll.
  * Designed to be called every 4 hours by the scheduler.
+ *
+ * Note: the Gamma markets endpoint does not carry a category field. Category
+ * is inferred downstream by the entity extractor using the keyword dictionary.
  */
 export async function pollGammaMarkets(): Promise<Market[]> {
   const raw = await fetchAllMarkets();

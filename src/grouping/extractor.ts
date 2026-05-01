@@ -18,61 +18,66 @@ export interface ExtractorResult {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Returns all entity keywords that appear in `text` for the given category.
- * Matching is case-insensitive and whole-word (avoids "ETH" matching "ethernet").
+ * Returns true if `keyword` appears in `text` as a whole word.
+ * Case-insensitive. Uses lookahead/lookbehind to avoid matching substrings
+ * (e.g. "ETH" must not fire inside "ethereum").
  */
-function matchEntities(category: string, text: string): string[] {
-  const keywords = ENTITY_DICTIONARY[category];
-  if (!keywords) return [];
-
-  const matched: string[] = [];
-  for (const kw of keywords) {
-    // Escape special regex chars in the keyword, then wrap in word boundaries.
-    // \b doesn't work well before/after "&" or "/" so we use a lookahead/lookbehind
-    // that checks for non-word chars or start/end of string.
-    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(`(?<![\\w])${escaped}(?![\\w])`, "i");
-    if (pattern.test(text)) {
-      matched.push(kw);
-    }
-  }
-  return matched;
+function matchesKeyword(keyword: string, text: string): boolean {
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(?<![\\w])${escaped}(?![\\w])`, "i");
+  return pattern.test(text);
 }
 
 /**
- * Canonical entity key: upper-cased, so "BTC" and "btc" land in the same bucket.
+ * Returns all (category, keyword) pairs that match the market's title,
+ * scanning every category section in the entity dictionary.
+ * Category is derived from the dictionary — not from the market record —
+ * because the Gamma API does not reliably expose a category field.
  */
+function matchAll(title: string): Array<{ category: string; entity: string }> {
+  const hits: Array<{ category: string; entity: string }> = [];
+
+  for (const [category, keywords] of Object.entries(ENTITY_DICTIONARY)) {
+    for (const kw of keywords) {
+      if (matchesKeyword(kw, title)) {
+        hits.push({ category, entity: kw.toUpperCase() });
+      }
+    }
+  }
+
+  return hits;
+}
+
 function bucketKey(category: string, entity: string): string {
-  return `${category}::${entity.toUpperCase()}`;
+  return `${category}::${entity}`;
 }
 
 // ── Main export ──────────────────────────────────────────────────────────────
 
 /**
- * Pure function: given a list of markets, returns keyword-entity buckets
- * (same category + same entity → same bucket) and a list of unmatched market IDs.
+ * Pure function: given a list of markets, returns keyword-entity buckets and
+ * a list of unmatched market IDs.
  *
- * A market may appear in multiple buckets if it matches several entities.
+ * Bucket identity = dictionary category + entity keyword. A market may appear
+ * in multiple buckets if it matches several entities. Category is inferred
+ * from the dictionary rather than read from the market record.
  */
 export function extractBuckets(markets: Market[]): ExtractorResult {
-  // key → { category, entity, marketIds }
   const bucketMap = new Map<string, Bucket>();
   const unmatched: string[] = [];
 
   for (const market of markets) {
-    // Normalise category to title-case so "crypto" and "Crypto" find the same keywords
-    const category = normaliseCategory(market.category);
-    const entities = matchEntities(category, market.title);
+    const hits = matchAll(market.title);
 
-    if (entities.length === 0) {
+    if (hits.length === 0) {
       unmatched.push(market.id);
       continue;
     }
 
-    for (const entity of entities) {
+    for (const { category, entity } of hits) {
       const key = bucketKey(category, entity);
       if (!bucketMap.has(key)) {
-        bucketMap.set(key, { category, entity: entity.toUpperCase(), marketIds: [] });
+        bucketMap.set(key, { category, entity, marketIds: [] });
       }
       bucketMap.get(key)!.marketIds.push(market.id);
     }
@@ -89,10 +94,4 @@ export function extractBuckets(markets: Market[]): ExtractorResult {
     buckets: Array.from(bucketMap.values()).filter((b) => b.marketIds.length > 0),
     unmatched,
   };
-}
-
-function normaliseCategory(raw: string): string {
-  if (!raw) return "";
-  // Title-case the first letter so "crypto" → "Crypto"
-  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }

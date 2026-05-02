@@ -209,6 +209,12 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
 const LLM_MAX_RETRIES = 5;
 const LLM_BASE_DELAY_MS = 2_000;
 
+/** Delay between successive LLM calls. Set LLM_CALL_DELAY_MS=3000 for OpenAI free tier. */
+const LLM_CALL_DELAY_MS = parseInt(process.env.LLM_CALL_DELAY_MS ?? "0", 10);
+
+/** Max markets per LLM call. Keeps prompts within context limits. Set lower for OpenAI. */
+const BUCKET_CHUNK_SIZE = parseInt(process.env.BUCKET_CHUNK_SIZE ?? "50", 10);
+
 async function callLlmWithRetry(
   systemPrompt: string,
   userPrompt: string,
@@ -216,7 +222,11 @@ async function callLlmWithRetry(
 ): Promise<string | null> {
   for (let attempt = 0; attempt < LLM_MAX_RETRIES; attempt++) {
     try {
-      return await callLlm(systemPrompt, userPrompt);
+      const result = await callLlm(systemPrompt, userPrompt);
+      if (LLM_CALL_DELAY_MS > 0) {
+        await new Promise((r) => setTimeout(r, LLM_CALL_DELAY_MS));
+      }
+      return result;
     } catch (err) {
       const isLast = attempt === LLM_MAX_RETRIES - 1;
       const status = (err as { status?: number }).status;
@@ -282,22 +292,35 @@ async function classifyFreshBucket(
   bucketKey: string,
   now: string
 ): Promise<void> {
-  const userPrompt = buildFreshPrompt(bucket, markets);
-  const raw = await callLlmWithRetry(SYSTEM_PROMPT, userPrompt, bucketKey);
-  if (raw === null) return;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    console.warn(`Grouper: invalid JSON from LLM for ${bucketKey}`);
-    return;
-  }
-
   const validIds = new Set(bucket.marketIds);
-  const groups = (Array.isArray(parsed) ? parsed : []).filter((g) =>
-    isValidGroup(g, validIds)
-  ) as LlmGroup[];
+  const allGroups: LlmGroup[] = [];
+
+  // Split large buckets into chunks to stay within context limits
+  for (let i = 0; i < markets.length; i += BUCKET_CHUNK_SIZE) {
+    const chunk = markets.slice(i, i + BUCKET_CHUNK_SIZE);
+    const chunkLabel =
+      markets.length > BUCKET_CHUNK_SIZE
+        ? `${bucketKey} [${i + 1}–${Math.min(i + BUCKET_CHUNK_SIZE, markets.length)}/${markets.length}]`
+        : bucketKey;
+
+    const userPrompt = buildFreshPrompt(bucket, chunk);
+    const raw = await callLlmWithRetry(SYSTEM_PROMPT, userPrompt, chunkLabel);
+    if (raw === null) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      console.warn(`Grouper: invalid JSON from LLM for ${chunkLabel}`);
+      continue;
+    }
+
+    const groups = (Array.isArray(parsed) ? parsed : []).filter((g) =>
+      isValidGroup(g, validIds)
+    ) as LlmGroup[];
+
+    allGroups.push(...groups);
+  }
 
   const db = getDb();
   db.transaction(() => {
@@ -305,7 +328,7 @@ async function classifyFreshBucket(
       INSERT INTO groups (id, mismatch_type, market_ids, confidence, grouped_at, bucket_key)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    for (const g of groups) {
+    for (const g of allGroups) {
       insert.run(
         crypto.randomUUID(),
         MISMATCH_TYPE_INT[g.mismatch_type as MismatchType],
@@ -317,7 +340,7 @@ async function classifyFreshBucket(
     }
   })();
 
-  console.log(`Grouper: fresh bucket ${bucketKey} → ${groups.length} groups`);
+  console.log(`Grouper: fresh bucket ${bucketKey} → ${allGroups.length} groups`);
 }
 
 // ── Case 2: existing groups — match new markets into them ─────────────────────

@@ -182,7 +182,17 @@ async function callOpenAi(systemPrompt: string, userPrompt: string): Promise<str
     }),
   });
 
-  if (!res.ok) throw new Error(`OpenAI API error: ${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const retryAfter = res.headers.get("Retry-After");
+    const err = new Error(`OpenAI API error: ${res.status} ${res.statusText}`) as Error & {
+      status: number;
+      retryAfter: number | null;
+    };
+    err.status = res.status;
+    err.retryAfter = retryAfter ? parseInt(retryAfter, 10) : null;
+    throw err;
+  }
+
   const data = (await res.json()) as {
     choices: Array<{ message: { content: string } }>;
   };
@@ -196,20 +206,37 @@ async function callLlm(systemPrompt: string, userPrompt: string): Promise<string
     : callClaude(systemPrompt, userPrompt);
 }
 
+const LLM_MAX_RETRIES = 5;
+const LLM_BASE_DELAY_MS = 2_000;
+
 async function callLlmWithRetry(
   systemPrompt: string,
   userPrompt: string,
   label: string
 ): Promise<string | null> {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < LLM_MAX_RETRIES; attempt++) {
     try {
       return await callLlm(systemPrompt, userPrompt);
     } catch (err) {
-      if (attempt === 0) {
-        console.warn(`Grouper: LLM call failed for ${label}, retrying...`, err);
-      } else {
-        console.warn(`Grouper: LLM call failed twice for ${label}, skipping`, err);
+      const isLast = attempt === LLM_MAX_RETRIES - 1;
+      const status = (err as { status?: number }).status;
+      const retryAfter = (err as { retryAfter?: number | null }).retryAfter;
+      const retryable = status === 429 || (status !== undefined && status >= 500);
+
+      if (!retryable || isLast) {
+        console.warn(`Grouper: LLM call failed for ${label}, skipping`, err);
+        return null;
       }
+
+      const delay =
+        status === 429 && retryAfter
+          ? retryAfter * 1000
+          : LLM_BASE_DELAY_MS * 2 ** attempt;
+
+      console.warn(
+        `Grouper: LLM call failed for ${label} (attempt ${attempt + 1}/${LLM_MAX_RETRIES}), retrying in ${delay}ms...`
+      );
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   return null;

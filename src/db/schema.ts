@@ -45,6 +45,10 @@ function migrate(db: Database.Database): void {
   if (!groupCols.includes("bucket_key")) {
     db.exec(`ALTER TABLE groups ADD COLUMN bucket_key TEXT NOT NULL DEFAULT ''`);
   }
+
+  if (!groupCols.includes("reasoning")) {
+    db.exec(`ALTER TABLE groups ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''`);
+  }
 }
 
 function applySchema(db: Database.Database): void {

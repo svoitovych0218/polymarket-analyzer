@@ -17,6 +17,7 @@ export interface MismatchStatus {
 export interface MarketsForGroupResult {
   markets: MarketWithPrice[];
   mismatch_status: MismatchStatus | null;
+  reasoning: string;
 }
 
 interface RawMarket {
@@ -41,17 +42,17 @@ export function getMarketsForGroup(
   groupId: string
 ): MarketsForGroupResult {
   const group = db
-    .prepare(`SELECT market_ids FROM groups WHERE id = ?`)
-    .get(groupId) as { market_ids: string } | undefined;
+    .prepare(`SELECT market_ids, reasoning FROM groups WHERE id = ?`)
+    .get(groupId) as { market_ids: string; reasoning: string } | undefined;
 
   if (!group) {
-    return { markets: [], mismatch_status: null };
+    return { markets: [], mismatch_status: null, reasoning: "" };
   }
 
   const marketIds: string[] = JSON.parse(group.market_ids);
 
   if (marketIds.length === 0) {
-    return { markets: [], mismatch_status: null };
+    return { markets: [], mismatch_status: null, reasoning: group.reasoning ?? "" };
   }
 
   const placeholders = marketIds.map(() => "?").join(", ");
@@ -86,5 +87,5 @@ export function getMarketsForGroup(
     last_seen_at: m.last_seen_at,
   }));
 
-  return { markets, mismatch_status };
+  return { markets, mismatch_status, reasoning: group.reasoning ?? "" };
 }

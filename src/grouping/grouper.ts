@@ -30,6 +30,7 @@ interface LlmGroup {
   mismatch_type: string;
   market_ids: string[];
   confidence: number;
+  reasoning: string;
 }
 
 interface DbGroup {
@@ -48,6 +49,7 @@ type AssignmentAction =
       mismatch_type: string;
       with_market_ids: string[];
       confidence: number;
+      reasoning: string;
     }
   | { action: "none"; market_id: string };
 
@@ -55,20 +57,42 @@ type AssignmentAction =
 
 const SYSTEM_PROMPT = `You are a prediction market analyst specializing in identifying mathematical price constraints between related markets.
 
-Given a list of prediction markets from the same category, identify logical groups where the market prices must be mathematically related. Only group markets that clearly belong together based on their titles, descriptions, and resolution conditions.
+Given a list of prediction markets from the same category, identify logical groups where the market prices MUST be mathematically constrained — meaning the laws of probability or logic make certain price combinations impossible or necessary.
 
 Return a JSON array of groups. Each group must have:
-- "mismatch_type": one of "threshold_ordering", "exhaustive_partition", "complementary", "temporal_dependency", "conditional_probability", "multi_market_constraint"
+- "mismatch_type": one of the types listed below
 - "market_ids": array of market IDs that form this group (minimum 2 markets)
 - "confidence": float 0.0–1.0 representing your confidence in this grouping
+- "reasoning": a concise explanation (1–3 sentences) of why the mathematical constraint applies (required, non-empty)
 
-Mismatch type definitions:
-- threshold_ordering: Markets at escalating thresholds where prices must satisfy ordering constraints (e.g. "Will BTC exceed $50k?" vs "Will BTC exceed $100k?")
-- exhaustive_partition: Markets that collectively cover all mutually exclusive outcomes where prices must sum to approximately 1
-- complementary: A market and its logical negation where prices must sum to 1
-- temporal_dependency: Sequential time-window markets where earlier resolution implies later (e.g. "by Q1?" vs "by Q2?")
-- conditional_probability: Markets where one is explicitly conditional on another
-- multi_market_constraint: Other complex price relationships between 3+ markets
+MISMATCH TYPE DEFINITIONS:
+
+threshold_ordering: Markets measure the same metric at escalating threshold values, so a higher-threshold YES necessarily implies a lower-threshold YES. Markets must share the same time window, same asset/subject, and same direction. The probability of the higher-threshold event can never exceed the probability of the lower-threshold event.
+  Example: "Will BTC exceed $50k by Dec 31?" vs "Will BTC exceed $100k by Dec 31?"
+
+exhaustive_partition: A set of markets that are mutually exclusive and collectively exhaustive — exactly one resolves YES and all others resolve NO. The prices must sum to approximately 1.0. All markets must cover the same event with no overlapping and no missing outcomes.
+  Example: "Will Candidate A win?" + "Will Candidate B win?" + "Will Candidate C win?" where exactly one of three candidates will win.
+
+complementary: A market and its exact logical negation — the two markets partition all outcomes so that one MUST resolve YES and the other MUST resolve NO. Their prices must sum to 1.0.
+  KEY TEST: Ask "Can both markets resolve NO simultaneously?" If yes, they are NOT complementary. Ask "Can both resolve YES simultaneously?" If yes, they are NOT complementary.
+  ✓ VALID: "Will BTC close above $50k on Dec 31?" vs "Will BTC close at or below $50k on Dec 31?" — these partition all outcomes; exactly one resolves YES.
+  ✗ INVALID: "Will BTC reach $94k May 4–10?" vs "Will BTC dip to $78k May 4–10?" — BTC could stay between $78k–$94k, so BOTH can resolve NO. NOT complementary.
+  ✗ INVALID: "Will Candidate A win?" vs "Will Candidate B win?" in a multi-candidate race — both can resolve NO. NOT complementary.
+
+temporal_dependency: Sequential time-window markets measuring the same outcome where an earlier-window YES implies a later-window YES. Markets must share the same asset, same direction, and have strictly ordered, non-overlapping time windows. An earlier YES is a logical subset of a later YES.
+  Example: "Will BTC reach $100k by end of Q1?" vs "Will BTC reach $100k by end of Q2?" — Q1 YES implies Q2 YES.
+
+conditional_probability: One market is explicitly conditional on the resolution of another market. The conditioning relationship must be stated in the market titles or descriptions. Do not infer conditioning from topic similarity alone.
+
+multi_market_constraint: Three or more markets with a complex mathematical relationship not captured by the above types. The constraint must be derivable from probability rules or market definitions, not just thematic similarity.
+
+COMMON MISTAKES — never make these groupings:
+1. Do NOT group two directional markets as complementary when both can resolve NO (e.g. two different price targets for the same asset in the same window).
+2. Do NOT group markets as threshold_ordering when they cover different time windows or different assets.
+3. Do NOT group markets as exhaustive_partition unless you are certain no outcome is missing and none overlap — when in doubt, do not group.
+4. Do NOT group markets based on topic or thematic similarity alone — the mathematical constraint must be real and directly derivable from the market definitions.
+5. Do NOT group markets from different underlying events (different assets, different elections, different subjects).
+6. Do NOT group two candidates in a multi-candidate race as complementary.
 
 Return ONLY a JSON array, no markdown, no explanation. If no groups exist, return [].`;
 
@@ -81,16 +105,20 @@ You will be given:
 
 For each new market return exactly one decision:
 - Join an existing group: {"market_id":"...","action":"join","group_id":"existing-uuid"}
-- Form a new group (with ≥1 other unassigned market): {"market_id":"...","action":"new_group","mismatch_type":"...","with_market_ids":["id1","id2"],"confidence":0.9}
-  ("with_market_ids" must include the new market itself plus at least one other market)
+- Form a new group (with ≥1 other unassigned market): {"market_id":"...","action":"new_group","mismatch_type":"...","with_market_ids":["id1","id2"],"confidence":0.9,"reasoning":"..."}
+  ("with_market_ids" must include the new market itself plus at least one other market; "reasoning" is required and non-empty)
 - No fit: {"market_id":"...","action":"none"}
 
 Rules:
 - Never reassign markets already in an existing group
 - "new_group" requires at least 2 market IDs in with_market_ids (including the new market)
+- "new_group" requires a non-empty "reasoning" string explaining the mathematical constraint
+- "join" does not require a reasoning field
 - Return a JSON array of decisions, one per new market
 
-Valid mismatch types: threshold_ordering, exhaustive_partition, complementary, temporal_dependency, conditional_probability, multi_market_constraint`;
+Valid mismatch types: threshold_ordering, exhaustive_partition, complementary, temporal_dependency, conditional_probability, multi_market_constraint
+
+complementary KEY TEST: Can both markets resolve NO simultaneously? If yes, do NOT use complementary.`;
 
 function buildFreshPrompt(bucket: Bucket, markets: Market[]): string {
   const marketList = markets
@@ -212,6 +240,9 @@ const LLM_CALL_DELAY_MS = parseInt(process.env.LLM_CALL_DELAY_MS ?? "0", 10);
 /** Max markets per LLM call. Keeps prompts within context limits. Set lower for OpenAI. */
 const BUCKET_CHUNK_SIZE = parseInt(process.env.BUCKET_CHUNK_SIZE ?? "50", 10);
 
+/** Minimum LLM confidence score to persist a group. Groups below this threshold are discarded. */
+const MIN_GROUP_CONFIDENCE = parseFloat(process.env.MIN_GROUP_CONFIDENCE ?? "0.80");
+
 async function callLlmWithRetry(
   systemPrompt: string,
   userPrompt: string,
@@ -273,6 +304,8 @@ function isValidGroup(g: unknown, validIds: Set<string>): g is LlmGroup {
   if (!VALID_MISMATCH_TYPES.includes(obj.mismatch_type as MismatchType)) return false;
   if (!Array.isArray(obj.market_ids) || obj.market_ids.length < 2) return false;
   if (typeof obj.confidence !== "number" || obj.confidence < 0 || obj.confidence > 1) return false;
+  if (obj.confidence < MIN_GROUP_CONFIDENCE) return false;
+  if (typeof obj.reasoning !== "string" || obj.reasoning.trim() === "") return false;
   // Accept both string and numeric IDs — LLMs often return numbers for numeric-looking IDs
   if (!obj.market_ids.every((id) => (typeof id === "string" || typeof id === "number") && validIds.has(String(id)))) return false;
   return true;
@@ -292,6 +325,7 @@ function isValidAssignment(a: unknown, newMarketIds: Set<string>, allBucketIds: 
     if (!(obj.with_market_ids as unknown[]).every((id) => typeof id === "string" && allBucketIds.has(id))) return false;
     if (!(obj.with_market_ids as string[]).includes(obj.market_id)) return false;
     if (typeof obj.confidence !== "number") return false;
+    if (typeof obj.reasoning !== "string" || obj.reasoning.trim() === "") return false;
     return true;
   }
   if (obj.action === "none") return true;
@@ -361,8 +395,8 @@ async function classifyFreshBucket(
   const db = getDb();
   db.transaction(() => {
     const insert = db.prepare(`
-      INSERT INTO groups (id, mismatch_type, market_ids, confidence, grouped_at, bucket_key)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO groups (id, mismatch_type, market_ids, confidence, grouped_at, bucket_key, reasoning)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     for (const g of allGroups) {
       insert.run(
@@ -371,7 +405,8 @@ async function classifyFreshBucket(
         JSON.stringify(g.market_ids),
         g.confidence,
         now,
-        bucketKey
+        bucketKey,
+        g.reasoning
       );
     }
   })();
@@ -434,15 +469,16 @@ async function classifyNewMarkets(
         }
       } else if (assignment.action === "new_group") {
         db.prepare(`
-          INSERT INTO groups (id, mismatch_type, market_ids, confidence, grouped_at, bucket_key)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO groups (id, mismatch_type, market_ids, confidence, grouped_at, bucket_key, reasoning)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `).run(
           crypto.randomUUID(),
           MISMATCH_TYPE_INT[assignment.mismatch_type as MismatchType],
           JSON.stringify(assignment.with_market_ids),
           assignment.confidence,
           now,
-          bucketKey
+          bucketKey,
+          assignment.reasoning
         );
       }
       // action === "none": nothing to do

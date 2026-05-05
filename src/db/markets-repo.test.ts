@@ -25,7 +25,8 @@ function createDb(): Database.Database {
       market_ids    TEXT NOT NULL,
       confidence    REAL NOT NULL,
       grouped_at    TEXT NOT NULL,
-      bucket_key    TEXT NOT NULL DEFAULT ''
+      bucket_key    TEXT NOT NULL DEFAULT '',
+      reasoning     TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE mismatches (

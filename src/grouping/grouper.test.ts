@@ -73,7 +73,7 @@ describe("groupBucket — fresh bucket (no existing groups)", () => {
     const db = makeDb([]);
     vi.mocked(getDb).mockReturnValue(db as any);
     mockCreate.mockResolvedValueOnce(
-      llmResponse([{ mismatch_type: "threshold_ordering", market_ids: ["m1", "m2"], confidence: 0.9 }])
+      llmResponse([{ mismatch_type: "threshold_ordering", market_ids: ["m1", "m2"], confidence: 0.9, reasoning: "Higher threshold markets must be cheaper than lower threshold markets." }])
     );
 
     const bucket: Bucket = { category: "Crypto", entity: "BTC", marketIds: ["m1", "m2"] };
@@ -151,7 +151,8 @@ describe("groupBucket — existing groups (new market matching)", () => {
           action: "new_group",
           mismatch_type: "complementary",
           with_market_ids: ["m3", "m4"],
-          confidence: 0.8,
+          confidence: 0.9,
+          reasoning: "These markets are strict complements — exactly one must resolve YES.",
         },
       ])
     );
@@ -223,6 +224,134 @@ describe("groupBucket — existing groups (new market matching)", () => {
     await groupBucket(bucket, marketMap, new Set(["m3"]));
 
     expect(db._updatedGroups.size).toBe(0);
+    expect(db._insertedGroups).toHaveLength(0);
+  });
+
+  it("accepts join action without a reasoning field", async () => {
+    const db = makeDb(existingGroups);
+    vi.mocked(getDb).mockReturnValue(db as any);
+    // join actions do not require reasoning
+    mockCreate.mockResolvedValueOnce(
+      llmResponse([{ market_id: "m3", action: "join", group_id: existingGroupId }])
+    );
+
+    const bucket: Bucket = { category: "Crypto", entity: "BTC", marketIds: ["m1", "m2", "m3"] };
+    const marketMap = new Map([
+      ["m1", makeMarket("m1", "Will BTC exceed $50k?")],
+      ["m2", makeMarket("m2", "Will BTC exceed $100k?")],
+      ["m3", makeMarket("m3", "Will BTC exceed $150k?")],
+    ]);
+
+    await groupBucket(bucket, marketMap, new Set(["m3"]));
+
+    expect(db._updatedGroups.has(existingGroupId)).toBe(true);
+  });
+
+  it("rejects new_group action when reasoning is missing", async () => {
+    const db = makeDb(existingGroups);
+    vi.mocked(getDb).mockReturnValue(db as any);
+    mockCreate.mockResolvedValueOnce(
+      llmResponse([
+        {
+          market_id: "m3",
+          action: "new_group",
+          mismatch_type: "complementary",
+          with_market_ids: ["m3", "m4"],
+          confidence: 0.9,
+          // reasoning omitted — should be rejected
+        },
+      ])
+    );
+
+    const bucket: Bucket = { category: "Crypto", entity: "BTC", marketIds: ["m1", "m2", "m3", "m4"] };
+    const marketMap = new Map([
+      ["m1", makeMarket("m1", "Will BTC exceed $50k?")],
+      ["m2", makeMarket("m2", "Will BTC exceed $100k?")],
+      ["m3", makeMarket("m3", "Will BTC stay below $50k?")],
+      ["m4", makeMarket("m4", "Will BTC not exceed $50k?")],
+    ]);
+
+    await groupBucket(bucket, marketMap, new Set(["m3"]));
+
+    expect(db._insertedGroups).toHaveLength(0);
+  });
+});
+
+describe("groupBucket — validation (isValidGroup)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("rejects fresh-bucket group with confidence below MIN_GROUP_CONFIDENCE (0.80)", async () => {
+    const db = makeDb([]);
+    vi.mocked(getDb).mockReturnValue(db as any);
+    mockCreate.mockResolvedValueOnce(
+      llmResponse([
+        {
+          mismatch_type: "threshold_ordering",
+          market_ids: ["m1", "m2"],
+          confidence: 0.75, // below 0.80 threshold
+          reasoning: "Threshold ordering constraint applies.",
+        },
+      ])
+    );
+
+    const bucket: Bucket = { category: "Crypto", entity: "BTC", marketIds: ["m1", "m2"] };
+    const marketMap = new Map([
+      ["m1", makeMarket("m1", "Will BTC exceed $50k?")],
+      ["m2", makeMarket("m2", "Will BTC exceed $100k?")],
+    ]);
+
+    await groupBucket(bucket, marketMap, new Set(["m1", "m2"]));
+
+    expect(db._insertedGroups).toHaveLength(0);
+  });
+
+  it("rejects fresh-bucket group with missing reasoning", async () => {
+    const db = makeDb([]);
+    vi.mocked(getDb).mockReturnValue(db as any);
+    mockCreate.mockResolvedValueOnce(
+      llmResponse([
+        {
+          mismatch_type: "threshold_ordering",
+          market_ids: ["m1", "m2"],
+          confidence: 0.9,
+          // reasoning omitted
+        },
+      ])
+    );
+
+    const bucket: Bucket = { category: "Crypto", entity: "BTC", marketIds: ["m1", "m2"] };
+    const marketMap = new Map([
+      ["m1", makeMarket("m1", "Will BTC exceed $50k?")],
+      ["m2", makeMarket("m2", "Will BTC exceed $100k?")],
+    ]);
+
+    await groupBucket(bucket, marketMap, new Set(["m1", "m2"]));
+
+    expect(db._insertedGroups).toHaveLength(0);
+  });
+
+  it("rejects fresh-bucket group with empty reasoning string", async () => {
+    const db = makeDb([]);
+    vi.mocked(getDb).mockReturnValue(db as any);
+    mockCreate.mockResolvedValueOnce(
+      llmResponse([
+        {
+          mismatch_type: "threshold_ordering",
+          market_ids: ["m1", "m2"],
+          confidence: 0.9,
+          reasoning: "   ", // whitespace-only — effectively empty
+        },
+      ])
+    );
+
+    const bucket: Bucket = { category: "Crypto", entity: "BTC", marketIds: ["m1", "m2"] };
+    const marketMap = new Map([
+      ["m1", makeMarket("m1", "Will BTC exceed $50k?")],
+      ["m2", makeMarket("m2", "Will BTC exceed $100k?")],
+    ]);
+
+    await groupBucket(bucket, marketMap, new Set(["m1", "m2"]));
+
     expect(db._insertedGroups).toHaveLength(0);
   });
 });

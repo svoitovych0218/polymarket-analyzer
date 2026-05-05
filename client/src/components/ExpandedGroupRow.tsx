@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { MarketsResponse } from "../types";
 
 interface Props {
@@ -20,6 +20,9 @@ export function ExpandedGroupRow({ groupId, colSpan }: Props) {
   const [data, setData] = useState<MarketsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showReasoning, setShowReasoning] = useState(false);
+
+  const closeModal = useCallback(() => setShowReasoning(false), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,10 +74,20 @@ export function ExpandedGroupRow({ groupId, colSpan }: Props) {
                 <span style={{ color: "#94a3b8" }}>
                   Detected: {fmtDate(data.mismatch_status.detected_at)}
                 </span>
+                {data.reasoning && (
+                  <button style={styles.reasoningBtn} onClick={() => setShowReasoning(true)}>
+                    Why grouped?
+                  </button>
+                )}
               </div>
             ) : (
               <div style={styles.statusBar}>
                 <span style={{ color: "#94a3b8" }}>No mismatch detected yet</span>
+                {data.reasoning && (
+                  <button style={styles.reasoningBtn} onClick={() => setShowReasoning(true)}>
+                    Why grouped?
+                  </button>
+                )}
               </div>
             )}
 
@@ -109,6 +122,19 @@ export function ExpandedGroupRow({ groupId, colSpan }: Props) {
             ) : (
               <div style={styles.msg}>No markets found</div>
             )}
+          </div>
+        )}
+
+        {/* Reasoning modal */}
+        {showReasoning && data?.reasoning && (
+          <div style={styles.modalOverlay} onClick={closeModal}>
+            <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+              <div style={styles.modalHeader}>
+                <span style={styles.modalTitle}>Why grouped?</span>
+                <button style={styles.modalClose} onClick={closeModal}>×</button>
+              </div>
+              <p style={styles.modalBody}>{data.reasoning}</p>
+            </div>
           </div>
         )}
       </td>
@@ -186,5 +212,60 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "2px 6px",
     fontSize: 11,
     color: "#94a3b8",
+  },
+  reasoningBtn: {
+    background: "transparent",
+    border: "1px solid #3b4265",
+    borderRadius: 4,
+    color: "#94a3b8",
+    cursor: "pointer",
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: "0.04em",
+    padding: "2px 8px",
+    marginLeft: "auto",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+  },
+  modal: {
+    background: "#1a1d2e",
+    border: "1px solid #2d3148",
+    borderRadius: 8,
+    maxWidth: 520,
+    width: "90%",
+    padding: 20,
+  },
+  modalHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontWeight: 700,
+    color: "#e2e8f0",
+    fontSize: 14,
+  },
+  modalClose: {
+    background: "transparent",
+    border: "none",
+    color: "#64748b",
+    cursor: "pointer",
+    fontSize: 20,
+    lineHeight: 1,
+    padding: 0,
+  },
+  modalBody: {
+    color: "#cbd5e1",
+    fontSize: 13,
+    lineHeight: 1.6,
+    margin: 0,
   },
 };

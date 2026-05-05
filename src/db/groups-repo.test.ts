@@ -14,7 +14,8 @@ function createDb(): Database.Database {
       market_ids    TEXT NOT NULL,
       confidence    REAL NOT NULL,
       grouped_at    TEXT NOT NULL,
-      bucket_key    TEXT NOT NULL DEFAULT ''
+      bucket_key    TEXT NOT NULL DEFAULT '',
+      reasoning     TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE mismatches (
@@ -41,18 +42,20 @@ function insertGroup(
     confidence?: number;
     grouped_at?: string;
     bucket_key?: string;
+    reasoning?: string;
   }
 ): void {
   db.prepare(
-    `INSERT INTO groups (id, mismatch_type, market_ids, confidence, grouped_at, bucket_key)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO groups (id, mismatch_type, market_ids, confidence, grouped_at, bucket_key, reasoning)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
     opts.id,
     opts.mismatch_type ?? 1,
     JSON.stringify(opts.market_ids ?? ["m1", "m2"]),
     opts.confidence ?? 0.9,
     opts.grouped_at ?? "2025-01-01T00:00:00.000Z",
-    opts.bucket_key ?? "crypto:BTC"
+    opts.bucket_key ?? "crypto:BTC",
+    opts.reasoning ?? ""
   );
 }
 
@@ -99,7 +102,7 @@ describe("queryGroups", () => {
   });
 
   it("returns all groups with correct shape", () => {
-    insertGroup(db, { id: "g1", mismatch_type: 3, confidence: 0.85, bucket_key: "crypto:ETH" });
+    insertGroup(db, { id: "g1", mismatch_type: 3, confidence: 0.85, bucket_key: "crypto:ETH", reasoning: "Strict complements." });
     insertMismatch(db, { id: "mm1", group_id: "g1", magnitude: 0.12, profitable: true });
 
     const result = queryGroups(db, {});
@@ -110,10 +113,22 @@ describe("queryGroups", () => {
     expect(row.mismatch_type_label).toBe("Type 3 — Complementary Outcome");
     expect(row.confidence).toBe(0.85);
     expect(row.bucket_key).toBe("crypto:ETH");
+    expect(row.reasoning).toBe("Strict complements.");
     expect(row.market_count).toBe(2);
     expect(row.latest_magnitude).toBeCloseTo(0.12);
     expect(row.latest_profitable).toBe(true);
     expect(row.latest_detected_at).toBe("2025-01-01T12:00:00.000Z");
+  });
+
+  it("returns reasoning correctly including empty string for legacy groups", () => {
+    insertGroup(db, { id: "g1", reasoning: "Price ordering must hold." });
+    insertGroup(db, { id: "g2" }); // no reasoning — defaults to ''
+
+    const result = queryGroups(db, {});
+    const g1 = result.data.find((r) => r.id === "g1")!;
+    const g2 = result.data.find((r) => r.id === "g2")!;
+    expect(g1.reasoning).toBe("Price ordering must hold.");
+    expect(g2.reasoning).toBe("");
   });
 
   it("returns null mismatch fields when group has no mismatches", () => {

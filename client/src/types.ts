@@ -6,6 +6,7 @@ export interface Group {
   confidence: number;
   bucket_key: string;
   grouped_at: string;
+  reasoning: string;
   latest_magnitude: number | null;
   latest_profitable: boolean | null;
   latest_detected_at: string | null;
@@ -35,6 +36,7 @@ export interface MismatchStatus {
 export interface MarketsResponse {
   markets: Market[];
   mismatch_status: MismatchStatus | null;
+  reasoning: string;
 }
 
 export type SortBy = "magnitude" | "detected_at";

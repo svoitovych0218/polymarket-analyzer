@@ -94,10 +94,7 @@ Valid mismatch types: threshold_ordering, exhaustive_partition, complementary, t
 
 function buildFreshPrompt(bucket: Bucket, markets: Market[]): string {
   const marketList = markets
-    .map(
-      (m) =>
-        `ID: ${m.id}\nTitle: ${m.title}\nDescription: ${m.description}\nResolution: ${m.resolutionCondition}`
-    )
+    .map((m) => `ID: ${m.id}\nTitle: ${m.title}\nDescription: ${m.description}`)
     .join("\n---\n");
 
   return (
@@ -254,13 +251,30 @@ async function callLlmWithRetry(
 
 // ── Validation ───────────────────────────────────────────────────────────────
 
+/**
+ * Extracts an array from the LLM response.
+ * Handles both bare arrays `[...]` and wrapped objects `{"groups": [...]}`,
+ * since OpenAI json_object mode cannot return a bare array.
+ */
+function extractArray(parsed: unknown): unknown[] {
+  if (Array.isArray(parsed)) return parsed;
+  if (typeof parsed === "object" && parsed !== null) {
+    const wrapped = Object.values(parsed as Record<string, unknown>).find((v) =>
+      Array.isArray(v)
+    );
+    if (wrapped) return wrapped as unknown[];
+  }
+  return [];
+}
+
 function isValidGroup(g: unknown, validIds: Set<string>): g is LlmGroup {
   if (typeof g !== "object" || g === null) return false;
   const obj = g as Record<string, unknown>;
   if (!VALID_MISMATCH_TYPES.includes(obj.mismatch_type as MismatchType)) return false;
   if (!Array.isArray(obj.market_ids) || obj.market_ids.length < 2) return false;
   if (typeof obj.confidence !== "number" || obj.confidence < 0 || obj.confidence > 1) return false;
-  if (!obj.market_ids.every((id) => typeof id === "string" && validIds.has(id))) return false;
+  // Accept both string and numeric IDs — LLMs often return numbers for numeric-looking IDs
+  if (!obj.market_ids.every((id) => (typeof id === "string" || typeof id === "number") && validIds.has(String(id)))) return false;
   return true;
 }
 
@@ -304,8 +318,20 @@ async function classifyFreshBucket(
         : bucketKey;
 
     const userPrompt = buildFreshPrompt(bucket, chunk);
+
+    if (process.env.DEBUG_PROMPTS === "true") {
+      console.log(`\n${"─".repeat(60)}`);
+      console.log(`[DEBUG] SYSTEM PROMPT:\n${SYSTEM_PROMPT}`);
+      console.log(`\n[DEBUG] USER PROMPT for ${chunkLabel}:\n${userPrompt}`);
+      console.log(`${"─".repeat(60)}\n`);
+    }
+
     const raw = await callLlmWithRetry(SYSTEM_PROMPT, userPrompt, chunkLabel);
     if (raw === null) continue;
+
+    if (process.env.DEBUG_PROMPTS === "true") {
+      console.log(`[DEBUG] RAW LLM RESPONSE for ${chunkLabel}:\n${raw}\n`);
+    }
 
     let parsed: unknown;
     try {
@@ -315,9 +341,19 @@ async function classifyFreshBucket(
       continue;
     }
 
-    const groups = (Array.isArray(parsed) ? parsed : []).filter((g) =>
-      isValidGroup(g, validIds)
-    ) as LlmGroup[];
+    const parsedArray = extractArray(parsed);
+    const groups = parsedArray
+      .filter((g) => isValidGroup(g, validIds))
+      .map((g) => ({ ...(g as LlmGroup), market_ids: (g as LlmGroup).market_ids.map(String) }));
+
+    if (parsedArray.length > 0 && groups.length === 0) {
+      console.warn(
+        `Grouper: LLM returned ${parsedArray.length} group(s) for ${chunkLabel} but all failed validation. Sample:`,
+        JSON.stringify(parsedArray[0])
+      );
+    } else if (parsedArray.length === 0) {
+      console.log(`Grouper: LLM returned no groups for ${chunkLabel}`);
+    }
 
     allGroups.push(...groups);
   }
@@ -376,7 +412,7 @@ async function classifyNewMarkets(
     return;
   }
 
-  const assignments = (Array.isArray(parsed) ? parsed : []).filter((a) =>
+  const assignments = extractArray(parsed).filter((a) =>
     isValidAssignment(a, newMarketIds, allBucketIds)
   ) as AssignmentAction[];
 

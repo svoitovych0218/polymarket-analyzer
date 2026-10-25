@@ -62,7 +62,7 @@ export interface PollResult {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const GAMMA_BASE_URL = "https://gamma-api.polymarket.com";
-/** Gamma caps /events at 100 per page regardless of the requested limit. */
+/** Gamma caps event pages at 100 regardless of the requested limit. */
 const PAGE_LIMIT = 100;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
@@ -178,25 +178,34 @@ async function fetchWithBackoff(
 
 // ── Pagination ────────────────────────────────────────────────────────────────
 
+/**
+ * Pages through /events/keyset. Plain /events rejects offsets above ~2000
+ * with a 422, so cursor pagination is the only way to fetch everything.
+ */
 async function fetchAllEvents(): Promise<RawGammaEvent[]> {
   const all: RawGammaEvent[] = [];
-  let offset = 0;
+  let cursor: string | undefined;
 
   const cutoff = new Date();
   cutoff.setMonth(cutoff.getMonth() + 1);
   const endDateMax = cutoff.toISOString().slice(0, 10);
 
   while (true) {
-    const url =
-      `${GAMMA_BASE_URL}/events` +
-      `?active=true&closed=false&limit=${PAGE_LIMIT}&offset=${offset}&end_date_max=${endDateMax}`;
+    const params = new URLSearchParams({
+      active: "true",
+      closed: "false",
+      limit: String(PAGE_LIMIT),
+      end_date_max: endDateMax,
+    });
+    if (cursor) params.set("after_cursor", cursor);
 
-    const res = await fetchWithBackoff(url);
-    const page: RawGammaEvent[] = await res.json();
+    const res = await fetchWithBackoff(`${GAMMA_BASE_URL}/events/keyset?${params}`);
+    const page = (await res.json()) as { events?: RawGammaEvent[]; next_cursor?: string };
 
-    if (!Array.isArray(page) || page.length === 0) break;
-    all.push(...page);
-    offset += page.length;
+    const events = page.events ?? [];
+    all.push(...events);
+    if (events.length === 0 || !page.next_cursor) break;
+    cursor = page.next_cursor;
   }
 
   return all;

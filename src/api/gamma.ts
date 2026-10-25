@@ -62,7 +62,8 @@ export interface PollResult {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const GAMMA_BASE_URL = "https://gamma-api.polymarket.com";
-const PAGE_LIMIT = 500;
+/** Gamma caps /events at 100 per page regardless of the requested limit. */
+const PAGE_LIMIT = 100;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1_000;
 
@@ -195,8 +196,7 @@ async function fetchAllEvents(): Promise<RawGammaEvent[]> {
 
     if (!Array.isArray(page) || page.length === 0) break;
     all.push(...page);
-    if (page.length < PAGE_LIMIT) break;
-    offset += PAGE_LIMIT;
+    offset += page.length;
   }
 
   return all;

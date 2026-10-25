@@ -246,6 +246,60 @@ export function detectMultiMarketConstraint(
   };
 }
 
+// ── Type 7 — Implication (cross-event) ───────────────────────────────────────
+//
+// market_ids = [A, B] where A resolving YES guarantees B resolves YES
+// (e.g. "ceasefire before GTA VI" ⇒ "ceasefire in 2026").
+// Constraint: P(A) <= P(B).
+// Violation: P(A) > P(B) + TOLERANCE.
+// Magnitude: P(A) - P(B).
+
+export function detectImplication(
+  group: Group,
+  prices: Map<string, number>
+): MismatchResult | null {
+  if (group.market_ids.length !== 2) return null;
+
+  const details = resolvePrices(group, prices);
+  if (details === null) return null;
+
+  const [idA, idB] = group.market_ids;
+  const magnitude = Math.max(0, details[idA] - details[idB]);
+
+  return {
+    violated: magnitude > TOLERANCE,
+    magnitude,
+    details,
+  };
+}
+
+// ── Type 8 — Mutually Exclusive (cross-event) ────────────────────────────────
+//
+// At most one market can resolve YES, but all may resolve NO
+// (e.g. "Fed cuts in December" vs "Fed hikes in December").
+// Constraint: sum of prices <= 1.
+// Violation: sum > 1 + TOLERANCE.
+// Magnitude: max(0, sum - 1).
+
+export function detectMutuallyExclusive(
+  group: Group,
+  prices: Map<string, number>
+): MismatchResult | null {
+  if (group.market_ids.length < 2) return null;
+
+  const details = resolvePrices(group, prices);
+  if (details === null) return null;
+
+  const sum = Object.values(details).reduce((a, b) => a + b, 0);
+  const magnitude = Math.max(0, sum - 1.0);
+
+  return {
+    violated: magnitude > TOLERANCE,
+    magnitude,
+    details,
+  };
+}
+
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
 const DETECTORS: Record<number, Detector> = {
@@ -255,6 +309,8 @@ const DETECTORS: Record<number, Detector> = {
   4: detectTemporalDependency,
   5: detectConditionalProbability,
   6: detectMultiMarketConstraint,
+  7: detectImplication,
+  8: detectMutuallyExclusive,
 };
 
 /**

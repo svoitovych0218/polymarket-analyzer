@@ -8,6 +8,8 @@ const TYPE_OPTIONS: Array<{ value: number | undefined; label: string }> = [
   { value: 4, label: "Type 4 — Temporal Dependency" },
   { value: 5, label: "Type 5 — Conditional Probability" },
   { value: 6, label: "Type 6 — Multi-Market Constraint" },
+  { value: 7, label: "Type 7 — Implication" },
+  { value: 8, label: "Type 8 — Mutually Exclusive" },
 ];
 
 const SORT_OPTIONS: Array<{ sortBy: SortBy; sortDir: SortDir; label: string }> = [

@@ -15,7 +15,8 @@ function createDb(): Database.Database {
       confidence    REAL NOT NULL,
       grouped_at    TEXT NOT NULL,
       bucket_key    TEXT NOT NULL DEFAULT '',
-      reasoning     TEXT NOT NULL DEFAULT ''
+      reasoning     TEXT NOT NULL DEFAULT '',
+      source        TEXT NOT NULL DEFAULT 'llm'
     );
 
     CREATE TABLE mismatches (

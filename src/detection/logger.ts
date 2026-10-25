@@ -8,6 +8,46 @@ import type { MismatchResult, Group } from "./detectors";
 
 const PROFITABLE_THRESHOLD = 0.05;
 
+// Mismatch type integers (mirrors MISMATCH_TYPE_INT in grouper.ts)
+const TYPE_EXHAUSTIVE_PARTITION = 2;
+const TYPE_COMPLEMENTARY = 3;
+const TYPE_MULTI_MARKET_CONSTRAINT = 6;
+
+/**
+ * Returns true only when the mismatch is exploitable by buying — i.e. no short
+ * selling required — and the magnitude clears the profitability threshold.
+ *
+ * Types 2 & 3 (partition/complementary): profitable only when sum < 1, meaning
+ * you can buy all outcomes for less than $1 and collect exactly $1 on resolution.
+ * Sum > 1 would require shorting every outcome — a different, harder trade.
+ *
+ * Type 6 (multi-market / Fréchet): profitable only when the joint market is
+ * below its lower Fréchet bound (underpriced → buy it).
+ * When joint is above the upper bound it is overpriced and requires shorting.
+ *
+ * Types 1, 4, 5: the detector fires only in the direction where magnitude > 0,
+ * so magnitude alone is a sufficient proxy; these remain unchanged.
+ */
+function isBuySideProfitable(result: MismatchResult, group: Group): boolean {
+  if (result.magnitude <= PROFITABLE_THRESHOLD) return false;
+
+  if (group.mismatch_type === TYPE_EXHAUSTIVE_PARTITION || group.mismatch_type === TYPE_COMPLEMENTARY) {
+    const sum = Object.values(result.details).reduce((a, b) => a + b, 0);
+    return sum < 1;
+  }
+
+  if (group.mismatch_type === TYPE_MULTI_MARKET_CONSTRAINT) {
+    const [jointId, idA, idB] = group.market_ids;
+    const pJoint = result.details[jointId];
+    const pA = result.details[idA];
+    const pB = result.details[idB];
+    const lowerBound = Math.max(0, pA + pB - 1);
+    return pJoint < lowerBound;
+  }
+
+  return true;
+}
+
 /** Resolved at call time so tests can override via process.env. */
 function getLogPath(): string {
   return process.env.MISMATCH_LOG_PATH
@@ -36,7 +76,7 @@ interface LogEntry {
  * 1. Appends one NDJSON line to the log file (includes market titles).
  * 2. Inserts a row into the `mismatches` SQLite table.
  *
- * Sets `profitable = true` when `magnitude > 0.05`.
+ * Sets `profitable = true` only for buy-side exploitable violations (see `isBuySideProfitable`).
  *
  * @param result      - The MismatchResult from a detector.
  * @param group       - The associated group record.
@@ -49,7 +89,7 @@ export function logMismatch(
 ): void {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
-  const profitable = result.magnitude > PROFITABLE_THRESHOLD;
+  const profitable = isBuySideProfitable(result, group);
 
   const entry: LogEntry = {
     id,

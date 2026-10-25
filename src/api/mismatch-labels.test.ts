@@ -26,6 +26,11 @@ describe("getMismatchTypeLabel", () => {
     expect(getMismatchTypeLabel(6)).toBe("Type 6 — Multi-Market Constraint");
   });
 
+  it("returns correct labels for cross-event types 7 and 8", () => {
+    expect(getMismatchTypeLabel(7)).toBe("Type 7 — Implication");
+    expect(getMismatchTypeLabel(8)).toBe("Type 8 — Mutually Exclusive");
+  });
+
   it("returns a fallback for unknown types", () => {
     expect(getMismatchTypeLabel(99)).toBe("Type 99 — Unknown");
   });

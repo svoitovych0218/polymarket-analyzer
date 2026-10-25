@@ -10,6 +10,7 @@ export interface GroupRow {
   bucket_key: string;
   grouped_at: string;
   reasoning: string;
+  source: string;
   latest_magnitude: number | null;
   latest_profitable: boolean | null;
   latest_detected_at: string | null;
@@ -38,6 +39,7 @@ interface RawGroupRow {
   bucket_key: string;
   grouped_at: string;
   reasoning: string;
+  source: string;
   market_count: number;
   latest_magnitude: number | null;
   latest_profitable: number | null;
@@ -91,7 +93,7 @@ export function queryGroups(db: Database.Database, query: GroupsQuery): GroupsRe
   const rows = db
     .prepare(
       `SELECT
-        g.id, g.mismatch_type, g.confidence, g.bucket_key, g.grouped_at, g.reasoning,
+        g.id, g.mismatch_type, g.confidence, g.bucket_key, g.grouped_at, g.reasoning, g.source,
         json_array_length(g.market_ids) AS market_count,
         lm.magnitude AS latest_magnitude,
         lm.profitable AS latest_profitable,
@@ -111,6 +113,7 @@ export function queryGroups(db: Database.Database, query: GroupsQuery): GroupsRe
     bucket_key: r.bucket_key,
     grouped_at: r.grouped_at,
     reasoning: r.reasoning,
+    source: r.source,
     latest_magnitude: r.latest_magnitude,
     latest_profitable: r.latest_profitable === null ? null : r.latest_profitable === 1,
     latest_detected_at: r.latest_detected_at,

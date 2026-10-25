@@ -5,6 +5,8 @@ const LABELS: Record<number, string> = {
   4: "Type 4 — Temporal Dependency",
   5: "Type 5 — Conditional Probability",
   6: "Type 6 — Multi-Market Constraint",
+  7: "Type 7 — Implication",
+  8: "Type 8 — Mutually Exclusive",
 };
 
 export function getMismatchTypeLabel(type: number): string {

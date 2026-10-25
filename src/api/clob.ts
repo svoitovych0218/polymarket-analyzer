@@ -2,11 +2,11 @@
 
 interface ClobPriceRequest {
   token_id: string;
-  side: "BUY";
+  side: "SELL";
 }
 
-// Response shape: { [tokenId]: { BUY: "0.58" } }
-type ClobPriceResponse = Record<string, { BUY: string }>;
+// Response shape: { [tokenId]: { SELL: "0.58" } }
+type ClobPriceResponse = Record<string, { SELL: string }>;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -60,7 +60,7 @@ async function postWithBackoff(
 // ── Main export ──────────────────────────────────────────────────────────────
 
 /**
- * Fetches the best YES (BUY-side) price for each market from the CLOB API.
+ * Fetches the best ask (lowest YES price to buy) for each market from the CLOB API.
  *
  * @param markets - Array of { id, clobTokenId } objects. Markets with an
  *   empty clobTokenId are silently skipped.
@@ -82,14 +82,14 @@ export async function fetchPrices(
     const batch = eligible.slice(i, i + BATCH_SIZE);
     const payload: ClobPriceRequest[] = batch.map((m) => ({
       token_id: m.clobTokenId,
-      side: "BUY",
+      side: "SELL",
     }));
 
     const res = await postWithBackoff(`${CLOB_BASE_URL}/prices`, payload);
     const data: ClobPriceResponse = await res.json();
 
     for (const [tokenId, sides] of Object.entries(data)) {
-      const price = parseFloat(sides.BUY);
+      const price = parseFloat(sides.SELL);
       if (isNaN(price)) continue;
 
       const marketId = tokenToMarketId.get(tokenId);

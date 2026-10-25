@@ -6,6 +6,8 @@ import {
   detectTemporalDependency,
   detectConditionalProbability,
   detectMultiMarketConstraint,
+  detectImplication,
+  detectMutuallyExclusive,
   detect,
   type Group,
 } from "./detectors";
@@ -374,6 +376,54 @@ describe("detectMultiMarketConstraint", () => {
 });
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
+
+// ── Type 7 — Implication ─────────────────────────────────────────────────────
+
+describe("detectImplication", () => {
+  it("returns null unless exactly 2 markets", () => {
+    expect(detectImplication(group(7, ["a"]), prices(["a", 0.3]))).toBeNull();
+    expect(
+      detectImplication(group(7, ["a", "b", "c"]), prices(["a", 0.3], ["b", 0.4], ["c", 0.5]))
+    ).toBeNull();
+  });
+
+  it("returns null when a price is missing", () => {
+    expect(detectImplication(group(7, ["a", "b"]), prices(["a", 0.3]))).toBeNull();
+  });
+
+  it("no violation when the narrower market is cheaper", () => {
+    const result = detectImplication(group(7, ["gta", "y2026"]), prices(["gta", 0.28], ["y2026", 0.3]));
+    expect(result?.violated).toBe(false);
+    expect(result?.magnitude).toBe(0);
+  });
+
+  it("flags the narrower market priced above the broader one", () => {
+    // "ceasefire before GTA VI" 35% vs "ceasefire in 2026" 30%
+    const result = detectImplication(group(7, ["gta", "y2026"]), prices(["gta", 0.35], ["y2026", 0.3]));
+    expect(result?.violated).toBe(true);
+    expect(result?.magnitude).toBeCloseTo(0.05);
+  });
+});
+
+// ── Type 8 — Mutually Exclusive ──────────────────────────────────────────────
+
+describe("detectMutuallyExclusive", () => {
+  it("returns null when fewer than 2 markets", () => {
+    expect(detectMutuallyExclusive(group(8, ["a"]), prices(["a", 0.6]))).toBeNull();
+  });
+
+  it("no violation when prices sum below 1 (all can resolve NO)", () => {
+    const result = detectMutuallyExclusive(group(8, ["cut", "hike"]), prices(["cut", 0.4], ["hike", 0.1]));
+    expect(result?.violated).toBe(false);
+    expect(result?.magnitude).toBe(0);
+  });
+
+  it("flags prices summing above 1", () => {
+    const result = detectMutuallyExclusive(group(8, ["cut", "hike"]), prices(["cut", 0.7], ["hike", 0.4]));
+    expect(result?.violated).toBe(true);
+    expect(result?.magnitude).toBeCloseTo(0.1);
+  });
+});
 
 describe("detect (dispatcher)", () => {
   it("routes type 1 to threshold ordering", () => {

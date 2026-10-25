@@ -17,7 +17,9 @@ function loadMarketMap(): Map<string, Market> {
   const rows = db
     .prepare(
       `SELECT id, title, description, resolution_condition, category,
-              clob_token_id, metadata_hash, last_seen_at FROM markets`
+              clob_token_id, metadata_hash, last_seen_at,
+              event_id, event_slug, neg_risk, group_item_title, group_item_threshold, end_date
+       FROM markets`
     )
     .all() as Array<{
     id: string;
@@ -28,6 +30,12 @@ function loadMarketMap(): Map<string, Market> {
     clob_token_id: string;
     metadata_hash: string;
     last_seen_at: string;
+    event_id: string;
+    event_slug: string;
+    neg_risk: number;
+    group_item_title: string;
+    group_item_threshold: string;
+    end_date: string;
   }>;
 
   return new Map(
@@ -42,6 +50,12 @@ function loadMarketMap(): Map<string, Market> {
         clobTokenId: r.clob_token_id,
         metadataHash: r.metadata_hash,
         lastSeenAt: r.last_seen_at,
+        eventId: r.event_id,
+        eventSlug: r.event_slug,
+        negRisk: r.neg_risk === 1,
+        groupItemTitle: r.group_item_title,
+        groupItemThreshold: r.group_item_threshold,
+        endDate: r.end_date,
       },
     ])
   );
@@ -71,7 +85,7 @@ function loadGroups(): Group[] {
 async function runDiscoveryLoop(): Promise<void> {
   console.log("[discovery] Starting Gamma poll + grouping cycle...");
 
-  const changed = await pollGammaMarkets();
+  const { changed, events } = await pollGammaMarkets();
   console.log(`[discovery] Changed markets: ${changed.length}`);
 
   if (changed.length === 0) {
@@ -80,8 +94,7 @@ async function runDiscoveryLoop(): Promise<void> {
   }
 
   const marketMap = loadMarketMap();
-  const allMarkets = Array.from(marketMap.values());
-  const { buckets } = extractBuckets(allMarkets);
+  const { buckets } = extractBuckets(events);
   const changedIds = new Set(changed.map((m) => m.id));
 
   console.log(

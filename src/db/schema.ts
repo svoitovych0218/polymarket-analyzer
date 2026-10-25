@@ -37,6 +37,24 @@ function migrate(db: Database.Database): void {
   if (!marketCols.includes("clob_token_id")) {
     db.exec(`ALTER TABLE markets ADD COLUMN clob_token_id TEXT NOT NULL DEFAULT ''`);
   }
+  if (!marketCols.includes("event_id")) {
+    db.exec(`ALTER TABLE markets ADD COLUMN event_id TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!marketCols.includes("event_slug")) {
+    db.exec(`ALTER TABLE markets ADD COLUMN event_slug TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!marketCols.includes("neg_risk")) {
+    db.exec(`ALTER TABLE markets ADD COLUMN neg_risk INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!marketCols.includes("group_item_title")) {
+    db.exec(`ALTER TABLE markets ADD COLUMN group_item_title TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!marketCols.includes("group_item_threshold")) {
+    db.exec(`ALTER TABLE markets ADD COLUMN group_item_threshold TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!marketCols.includes("end_date")) {
+    db.exec(`ALTER TABLE markets ADD COLUMN end_date TEXT NOT NULL DEFAULT ''`);
+  }
 
   const groupCols = (
     db.prepare(`PRAGMA table_info(groups)`).all() as Array<{ name: string }>
@@ -45,9 +63,11 @@ function migrate(db: Database.Database): void {
   if (!groupCols.includes("bucket_key")) {
     db.exec(`ALTER TABLE groups ADD COLUMN bucket_key TEXT NOT NULL DEFAULT ''`);
   }
-
   if (!groupCols.includes("reasoning")) {
     db.exec(`ALTER TABLE groups ADD COLUMN reasoning TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!groupCols.includes("source")) {
+    db.exec(`ALTER TABLE groups ADD COLUMN source TEXT NOT NULL DEFAULT 'llm'`);
   }
 }
 
@@ -82,6 +102,36 @@ function applySchema(db: Database.Database): void {
       profitable    INTEGER NOT NULL DEFAULT 0,  -- boolean (0/1)
       detected_at   TEXT NOT NULL,
       FOREIGN KEY (group_id) REFERENCES groups(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id            TEXT PRIMARY KEY,
+      slug          TEXT NOT NULL,
+      title         TEXT NOT NULL,
+      description   TEXT NOT NULL DEFAULT '',
+      neg_risk      INTEGER NOT NULL DEFAULT 0,
+      active        INTEGER NOT NULL DEFAULT 1,
+      closed        INTEGER NOT NULL DEFAULT 0,
+      archived      INTEGER NOT NULL DEFAULT 0,
+      liquidity     REAL,
+      volume        REAL,
+      open_interest REAL,
+      start_date    TEXT,
+      end_date      TEXT,
+      created_at    TEXT,
+      updated_at    TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS tags (
+      id    TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      slug  TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS event_tags (
+      event_id TEXT NOT NULL REFERENCES events(id),
+      tag_id   TEXT NOT NULL REFERENCES tags(id),
+      PRIMARY KEY (event_id, tag_id)
     );
   `);
 }
